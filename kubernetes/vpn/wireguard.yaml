@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wireguard-vpn
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wireguard
+  template:
+    metadata:
+      labels:
+        app: wireguard
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - wireguard
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+        - name: wireguard
+          image: ghcr.io/linuxserver/wireguard:latest
+          extensions:
+            securityContext:
+              capabilities:
+                add:
+                  - NET_ADMIN
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: "Europe/London"
+            - name: SERVERURL
+              value: vpn.gbt.org.uk
+            - name: PEERS
+              value: "laptop,phone"
+            - name: PEERDNS
+              value: "1.1.1.1"
+          ports:
+            - containerPort: 51820
+              protocol: UDP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wireguard-service
+  annotations:
+    metallb.universe.tf/address-pool: private-vlan11-pool
+spec:
+  type: LoadBalancer
+  selector:
+    app: wireguard
+  ports:
+    - port: 51820
+      targetPort: 51820
+      protocol: UDP

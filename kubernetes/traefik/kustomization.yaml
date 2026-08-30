@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: traefik
+    repo: https://traefik.github.io/charts
+    version: 30.0.2
+    releaseName: traefik-ingress
+    namespace: traefik
+    valuesInline:
+      env:
+        - name: CLOUDFLARE_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cloudflare-api-secret
+              key: api-token
+      certResolvers:
+        cloudflare-resolver:
+          acme:
+            email: matt@gbt.org.uk # Will be modified with your actual email
+            storage: /data/acme.json
+            dnsChallenge:
+              provider: cloudflare
+              resolvers:
+                - 1.1.1.1:53
+                - 1.0.0.1:53
+      ports:
+        web:
+          redirectTo:
+            port: websecure
+        websecure:
+          tls:
+            enabled: true
+            certResolver: cloudflare-resolver
+            domains:
+              - main: "gbt.org.uk"
+                sans:
+                  - "*.gbt.org.uk"
+              - main: "thepinkmile.org.uk"
+                sans:
+                  - "*.thepinkmile.org.uk"
+namespace: traefik

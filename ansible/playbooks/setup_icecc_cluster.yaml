@@ -1,0 +1,59 @@
+---
+- name: Configure Distributed ICECC Compilation Cluster
+  hosts: cluster
+  become: true
+  tasks:
+
+    # 1. Install the core Icecream packages on the base OS
+    - name: Install ICECC daemon and dependencies
+      ansible.builtin.package:
+        name:
+          - icecc
+          - libcap2-bin # Required for container capability bindings if needed later
+        state: present
+
+    # 2. Stop services to apply configuration cleanly
+    - name: Ensure ICECC services are stopped during configuration
+      ansible.builtin.service:
+        name: icecc-daemon
+        state: stopped
+
+    # 3. Create the scratch directory on the NVMe drive for workers
+    - name: Create ICECC scratch directory on NVMe
+      ansible.builtin.file:
+        path: "{{ nvme_scratch_mount }}/icecc"
+        state: directory
+        owner: icecc
+        group: icecc
+        mode: '0775'
+
+    # 4. Apply unified block configuration using host specific inventory varibles
+    - name: Configure ICECC Daemon parameters on workers
+      ansible.builtin.blockinfile:
+        path: /etc/icecc/icecc.conf
+        block: |
+          ICECC_VERSION=""
+          # Point all nodes directly to the coordinator's local mDNS address
+          ICECC_SCHEDULER_HOST="pi-blade-01.local"
+          # Dynamically cap parallel jobs using our architecture-aware inventory variables
+          ICECC_MAX_JOBS="{{ icecc_max_jobs }}"
+          ICECC_ALLOW_REMOTE="yes"
+          # Protect the eMMC by forcing ICECC cache onto the local high-speed NVMe drive
+          ICECC_BASEDIR="{{ nvme_scratch_mount }}/icecc"
+      when: icecc_role == 'worker'
+
+    # 5. Enable and start services based on host roles
+    - name: Start the ICECC Scheduler service on coordinator
+      ansible.builtin.service:
+        name: icecc-scheduler
+        enabled: true
+        state: started
+      when: icecc_role == 'scheduler'
+
+    # 6. Start the ICECC Daemon service on worker blades
+    - name: Start the ICECC Daemon service on workers
+      ansible.builtin.service:
+        name: icecc-daemon
+        enabled: true
+        state: started
+      when: icecc_role == 'worker'

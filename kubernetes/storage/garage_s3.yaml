@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: garage-s3-backend-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 300Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: garage-s3-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: garage-s3
+  template:
+    metadata:
+      labels:
+        app: garage-s3
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - garage-s3
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+        - name: garage
+          image: dxflrs/garage:v1.0.0  # Official minimal stable Rust build
+          env:
+            # Fully automated configuration parameters passed into the binary
+            - name: GARAGE_DATA_DIR
+              value: "/data"
+            - name: GARAGE_RPC_SECRET
+              value: "SuperSecretClusterRPCKeyChangeMe123!"
+            - name: GARAGE_S3_API_BIND
+              value: "[::]:3900"
+          ports:
+            - containerPort: 3900
+              name: s3-api
+            - containerPort: 3901
+              name: rpc
+          volumeMounts:
+            - name: storage-backend
+              mountPath: /data
+      volumes:
+        - name: storage-backend
+          persistentVolumeClaim:
+            claimName: garage-s3-backend-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-s3-service
+spec:
+  type: ClusterIP
+  selector:
+    app: garage-s3
+  ports:
+    - name: s3-api
+      port: 3900
+      targetPort: 3900

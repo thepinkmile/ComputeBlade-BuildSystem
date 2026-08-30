@@ -1,0 +1,52 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: private-vlan11-pool
+  namespace: metallb-system
+spec:
+  # Your secure internal private network pool
+  addresses:
+    - 192.168.11.100-192.168.11.250
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: yocto-vlan13-pool
+  namespace: metallb-system
+spec:
+  # Dedicated network segment for your BitBake / ICECC compilation nodes
+  addresses:
+    - 192.168.13.100-192.168.13.250
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: public-vlan100-pool
+  namespace: metallb-system
+spec:
+  # First public website/service tier
+  addresses:
+    - 192.168.100.100-192.168.100.250
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: public-vlan150-pool
+  namespace: metallb-system
+spec:
+  # Second public website/service tier
+  addresses:
+    - 192.168.150.100-192.168.150.250
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: cluster-l2-advertisement
+  namespace: metallb-system
+spec:
+  # A single, clean declaration advertising all active network slices across the trunk
+  ipAddressPools:
+    - private-vlan11-pool
+    - yocto-vlan13-pool
+    - public-vlan100-pool
+    - public-vlan150-pool

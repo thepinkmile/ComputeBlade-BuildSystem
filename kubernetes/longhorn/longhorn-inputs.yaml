@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: longhorn-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: longhorn-default-setting
+  namespace: longhorn-system
+data:
+  default-setting.yaml: |
+    # Force Longhorn to use your high-speed NVMe mount paths exclusively
+    default-data-path: "/var/lib/longhorn"
+    # Prevent the system from overloading your 4GB modules with unnecessary structural replicas
+    default-replica-count: 2
+    # Ensure UI and internal proxies bind strictly to your private VLAN interface space
+    storage-network: "telemetry"

@@ -1,0 +1,45 @@
+---
+- name: Prepare Local NVMe Storage for Longhorn
+  hosts: cluster
+  become: true
+  tasks:
+
+    # 1. Ensure the required tools are installed on the base OS
+    - name: Ensure filesystem utilities are present
+      ansible.builtin.package:
+        name:
+          - parted
+          - e2fsprogs
+        state: present
+
+    # 2. Safely create a single primary partition over the entire NVMe drive
+    - name: Partition the NVMe drive if unpartitioned
+      community.general.parted:
+        device: /dev/nvme0n1
+        number: 1
+        state: present
+        fs_type: ext4
+        label: gpt
+
+    # 3. Format the newly created partition with Ext4 optimized for heavy I/O
+    - name: Format the NVMe partition as Ext4
+      community.general.filesystem:
+        fstype: ext4
+        dev: /dev/nvme0n1p1
+        opts: -O mmp  # Multi-mount protection to prevent corruption across the cluster
+
+    # 4. Create the dedicated Longhorn storage directory
+    - name: Create dedicated Longhorn directory path
+      ansible.builtin.file:
+        path: /var/lib/longhorn
+        state: directory
+        mode: '0750'
+
+    # 5. Mount the NVMe drive and ensure it persists across reboots in fstab
+    - name: Mount NVMe partition to Longhorn path
+      ansible.posix.mount:
+        path: /var/lib/longhorn
+        src: /dev/nvme0n1p1
+        fstype: ext4
+        opts: defaults,noatime,nodiratime  # Optimized parameters to protect drive life
+        state: mounted

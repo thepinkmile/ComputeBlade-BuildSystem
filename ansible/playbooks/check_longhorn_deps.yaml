@@ -1,0 +1,17 @@
+---
+- name: Install Bare-Metal Dependencies for Longhorn Engine
+  hosts: cluster
+  become: true
+  tasks:
+    - name: Install open-iscsi and NFS client utilities
+      ansible.builtin.package:
+        name:
+          - open-iscsi
+          - nfs-common
+        state: present
+
+    - name: Enable and start iSCSI daemon
+      ansible.builtin.service:
+        name: iscsid
+        enabled: true
+        state: started
