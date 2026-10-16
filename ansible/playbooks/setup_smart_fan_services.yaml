@@ -2,58 +2,117 @@
 - name: Bootstrapping ComputeBlade Hosts on Raspberry Pi OS Trixie
   hosts: cluster
   become: true
-  vars:
-    repo_url: "https://github.com/uptime-lab/compute-blade-pwm-fan-control.git"
-    repo_branch: "master"
-    install_dir: "/opt/compute-blade-circuitpy-fan-unit"
 
   tasks:
-    - name: Ensure UART is enabled in boot config
-      lineinfile:
-        path: /boot/firmware/config.txt
-        regexp: '^enable_uart='
-        line: 'enable_uart=1'
-        state: present
-      register: uart_config
+    - name: Configure UART for CM5 modules
+      block:
+        - name: Ensure UART4 is enabled for CM5
+          lineinfile:
+            path: /boot/firmware/config.txt
+            regexp: '^dtparam=uart4='
+            line: 'dtparam=uart4=on'
+            state: present
+          register: cm5_uart
 
-    - name: Ensure UART5 overlay is enabled for Smart Fan communication
-      lineinfile:
-        path: /boot/firmware/config.txt
-        regexp: '^dtoverlay=uart5'
-        line: 'dtoverlay=uart5'
-        insertafter: '^enable_uart=1'
-        state: present
-      register: uart5_overlay
+        - name: Define expected serial device path for CM5
+          set_fact:
+            expected_serial_port: "/dev/ttyAMA4"
+            console_service: "serial-getty@ttyAMA4.service"
+      when: module_type == 'cm5'
+
+    - name: Configure UART for CM4 modules
+      block:
+        - name: Ensure UART is enabled for CM4
+          lineinfile:
+            path: /boot/firmware/config.txt
+            regexp: '^enable_uart='
+            line: 'enable_uart=1'
+            state: present
+          register: cm4_uart
+
+        - name: Ensure UART5 overlay is enabled for CM4
+          lineinfile:
+            path: /boot/firmware/config.txt
+            regexp: '^dtoverlay=uart5'
+            line: 'dtoverlay=uart5'
+            insertafter: '^enable_uart=1'
+            state: present
+          register: cm4_overlay
+
+        - name: Define expected serial device path for CM4
+          set_fact:
+            expected_serial_port: "/dev/ttyAMA5"
+            console_service: "serial-getty@ttyAMA5.service"
+      when: module_type == 'cm4'
 
     - name: Reboot the blade if UART config changed
       ansible.builtin.reboot:
         reboot_timeout: 300
         msg: "Rebooting to apply enable_uart=1 changes"
-      when: uart_config.changed or uart5_overlay.changed
+      when: >
+        (module_type == 'cm5' and cm5_uart.changed) or
+        (module_type == 'cm4' and (cm4_uart.changed or cm4_overlay.changed))
+
+    - name: Stop and disable OS serial console service to free up the hardware port
+      systemd:
+        name: "{{ console_service }}"
+        state: stopped
+        enabled: no
+      failed_when: false
 
     - name: Install required system packages
       apt:
         name:
           - git
           - python3-serial
+          - python3-gpiozero
         state: present
         update_cache: yes
 
-    - name: Probe serial bus to check if an active RP2040 Smart Unit responds
+    - name: Direct Serial Handshake Check against Uptime Lab RP2040 Firmware
       shell: |
         python3 -c "
-        import serial, sys
+        import serial, sys, time
+        
+        port_path = '{{ expected_serial_port }}'
+        print(f'[DEBUG] Attempting to open serial connection on: {port_path}')
+        
         try:
-            # Attempt a brief handshake with the RP2040 smart controller
-            ser = serial.Serial('/dev/ttyAMA5', 9600, timeout=2)
+            # Open the dynamic interface with a strict 2-second timeout window
+            ser = serial.Serial(port_path, 9600, timeout=2)
+            print(f'[DEBUG] Port {port_path} successfully opened in OS.')
+            
+            # Clear out any noise spikes from the system boot
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+            print('[DEBUG] Serial input/output buffers flushed.')
+            
+            # Send an explicit empty newline command block to see if the RP2040 firmware wakes up
+            print('[DEBUG] Transmitting line break (\\n) payload to probe for RP2040...')
             ser.write(b'\n')
-            # If the port successfully opens and initializes without error, it's Smart hardware
-            sys.exit(0)
+            time.sleep(0.5)
+            
+            # The CircuitPython firmware echo/handshake loop sends data back upon processing text. 
+            # If nothing is connected, the line stays completely dead (in_waiting == 0)
+            bytes_waiting = ser.in_waiting
+            print(f'[DEBUG] Probe complete. Bytes waiting in buffer: {bytes_waiting}')
+            if bytes_waiting > 0:
+                incoming_data = ser.read(bytes_waiting)
+                print(f'[SUCCESS] Smart Fan response data intercepted: {incoming_data}')
+                sys.exit(0)  # Smart Fan detected successfully
+            else:
+                print('[FAILURE] Connection opened, but no bytes were returned. Line is floating/empty (STA).')
+                sys.exit(1)  # No active microcontroller responding (STA/Empty)
         except Exception:
-            sys.exit(1)
+            print(f'[ERROR] Failed to communicate or initialize port interface. Exception: {str(e)}')
+            sys.exit(1)      # Failure to interact with device pathway defaults to STA
         "
       failed_when: false
-      register: smart_fan_probe
+      register: fan_handshake_probe
+
+    - name: Output Detailed Handshake Diagnostic Logs
+      debug:
+        var: fan_handshake_probe.stdout_lines
 
     - name: Set structural properties for Smart Fan Unit hardware
       set_fact:
@@ -62,7 +121,7 @@
         repo_branch: "main"
         install_dir: "/opt/circuitpy-fan-unit"
         exec_cmd: "/usr/bin/python3 /opt/circuitpy-fan-unit/host_daemon.py"
-      when: smart_fan_probe.rc == 0
+      when: fan_handshake_probe.rc == 0
 
     - name: Set structural properties for Standard (STA) Fan Unit hardware
       set_fact:
@@ -71,11 +130,11 @@
         repo_branch: "master"
         install_dir: "/opt/compute-blade-pwm-fan-control"
         exec_cmd: "/usr/bin/python3 /opt/compute-blade-pwm-fan-control/fan_control.py"
-      when: smart_fan_probe.rc != 0
+      when: fan_handshake_probe.rc != 0
 
-    - name: Log the discovered fan hardware classification
+    - name: Log discovered hardware matrix profile
       debug:
-        msg: "Blade has identified an autodetected [{{ fan_type | upper }}] Fan Unit layout."
+        msg: "Target mapped as {{ module_type | upper }} using a [{{ fan_type | upper }}] Fan Unit."
 
     - name: Clean up any old competing systemd units if hardware was swapped
       systemd:
