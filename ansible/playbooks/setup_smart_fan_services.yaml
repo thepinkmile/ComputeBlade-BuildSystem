@@ -1,0 +1,119 @@
+---
+- name: Bootstrapping ComputeBlade Hosts on Raspberry Pi OS Trixie
+  hosts: cluster
+  become: true
+  vars:
+    repo_url: "https://github.com/uptime-lab/compute-blade-pwm-fan-control.git"
+    repo_branch: "master"
+    install_dir: "/opt/compute-blade-circuitpy-fan-unit"
+
+  tasks:
+    - name: Ensure UART is enabled in boot config
+      lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^enable_uart='
+        line: 'enable_uart=1'
+        state: present
+      register: uart_config
+
+    - name: Ensure UART5 overlay is enabled for Smart Fan communication
+      lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^dtoverlay=uart5'
+        line: 'dtoverlay=uart5'
+        insertafter: '^enable_uart=1'
+        state: present
+      register: uart5_overlay
+
+    - name: Reboot the blade if UART config changed
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+        msg: "Rebooting to apply enable_uart=1 changes"
+      when: uart_config.changed or uart5_overlay.changed
+
+    - name: Install required system packages
+      apt:
+        name:
+          - git
+          - python3-serial
+        state: present
+        update_cache: yes
+
+    - name: Probe serial bus to check if an active RP2040 Smart Unit responds
+      shell: |
+        python3 -c "
+        import serial, sys
+        try:
+            # Attempt a brief handshake with the RP2040 smart controller
+            ser = serial.Serial('/dev/ttyAMA5', 9600, timeout=2)
+            ser.write(b'\n')
+            # If the port successfully opens and initializes without error, it's Smart hardware
+            sys.exit(0)
+        except Exception:
+            sys.exit(1)
+        "
+      failed_when: false
+      register: smart_fan_probe
+
+    - name: Set structural properties for Smart Fan Unit hardware
+      set_fact:
+        fan_type: "smart"
+        repo_url: "https://github.com/uptime-lab/circuitpy-fan-unit.git"
+        repo_branch: "main"
+        install_dir: "/opt/circuitpy-fan-unit"
+        exec_cmd: "/usr/bin/python3 /opt/circuitpy-fan-unit/host_daemon.py"
+      when: smart_fan_probe.rc == 0
+
+    - name: Set structural properties for Standard (STA) Fan Unit hardware
+      set_fact:
+        fan_type: "sta"
+        repo_url: "https://github.com/uptime-lab/compute-blade-pwm-fan-control.git"
+        repo_branch: "master"
+        install_dir: "/opt/compute-blade-pwm-fan-control"
+        exec_cmd: "/usr/bin/python3 /opt/compute-blade-pwm-fan-control/fan_control.py"
+      when: smart_fan_probe.rc != 0
+
+    - name: Log the discovered fan hardware classification
+      debug:
+        msg: "Blade has identified an autodetected [{{ fan_type | upper }}] Fan Unit layout."
+
+    - name: Clean up any old competing systemd units if hardware was swapped
+      systemd:
+        name: compute-blade-fan
+        state: stopped
+        enabled: no
+      failed_when: false
+
+    - name: Clone the fan control repository
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ install_dir }}"
+        version: "{{ repo_branch }}"
+        force: yes
+        accept_hostkey: yes
+
+    - name: Create systemd service file for fan control
+      copy:
+        dest: /etc/systemd/system/compute-blade-fan.service
+        content: |
+          [Unit]
+          Description=Compute Blade Dynamic Fan Controller ({{ fan_type | upper }})
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory={{ install_dir }}
+          ExecStart={{ exec_cmd }}
+          Restart=always
+          RestartSec=5
+          
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Force systemd to reload configs, enable and start fan service
+      systemd:
+        name: compute-blade-fan
+        daemon_reload: yes
+        enabled: yes
+        state: restarted

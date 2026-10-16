@@ -1,0 +1,42 @@
+---
+- name: Configuring Jumbo Frames on Nodes
+  hosts: computeblades
+  become: true
+  tasks:
+    - name: Deploy Netplan VLAN trunk configuration
+      ansible.builtin.copy:
+        dest: /etc/netplan/50-cloud-init.yaml
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          network:
+            version: 2
+            renderer: NetworkManager
+            ethernets:
+              eth0:
+                dhcp4: no
+                mtu: 9000
+            vlans:
+              eth0.10: # Dedicated K8s Pod/Service Network Plane
+                id: 10
+                link: eth0
+                dhcp4: yes
+                mtu: 9000
+              eth0.20: # Secondary Network Plane (Storage / NVMe M.2)
+                id: 20
+                link: eth0
+                dhcp4: yes
+                mtu: 9000
+      notify: Reload Physical Infrastructure
+
+  handlers:
+    - name: Reload Physical Infrastructure
+      ansible.builtin.shell: |
+        netplan generate
+        netplan apply
+      notify: Roll Cluster Nodes
+
+    - name: Roll Cluster Nodes
+      ansible.builtin.reboot:
+        reboot_timeout: 300
