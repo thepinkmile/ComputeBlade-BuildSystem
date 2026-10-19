@@ -51,23 +51,61 @@
             (module_type == 'cm5' and cm5_overlay.changed) or
             (module_type == 'cm4' and cm4_overlay.changed)
 
-    - name: Download the Compute Blade Agent autoinstall script
-      get_url:
-        url: "https://raw.githubusercontent.com/compute-blade-community/compute-blade-agent/main/hack/autoinstall.sh"
-        dest: "/tmp/autoinstall.sh"
-        mode: '0755'
+    - name: Gather installed system package facts
+      package_facts:
+        manager: apt
+      register: system_packages
 
-    - name: Execute the autoinstall script to initialize fan configurations
-      shell: "/tmp/autoinstall.sh"
-      register: agent_install_output
-      changed_when: "'Installing' in agent_install_output.stdout"
+    - name: Check version of the latest remote package without installing it
+      shell: |
+        curl -s "https://api.github.com/repos/compute-blade-community/compute-blade-agent/releases/latest" \
+        | grep '"tag_name":' \
+        | sed -E 's/.*"v([^"]+)".*/\1/'
+      failed_when: false
+      register: latest_agent_version
+      changed_when: false
 
-    - name: Clean up the installer footprint from temporal storage
-      file:
-        path: /tmp/autoinstall.sh
-        state: absent
+    - name: Install Latest compute-blade-agent
+      block:
+        - name: Download the Compute Blade Agent autoinstall script
+          get_url:
+            url: "https://raw.githubusercontent.com/compute-blade-community/compute-blade-agent/main/hack/autoinstall.sh"
+            dest: "/tmp/autoinstall.sh"
+            mode: '0755'
+
+        - name: Execute the autoinstall script to initialize fan configurations
+          shell: "/tmp/autoinstall.sh"
+          register: agent_install_output
+          changed_when: "'Installing' in agent_install_output.stdout"
+
+        - name: Clean up the installer footprint from temporal storage
+          file:
+            path: /tmp/autoinstall.sh
+            state: absent
+      when: >
+        'compute-blade-agent' not in ansible_facts.packages or
+        (ansible_facts.packages['compute-blade-agent'] | map(attribute='version') | first) != latest_agent_version.stdout.strip()
+
+    - name: Ensure Agent Stealth Mode active
+      lineinfile:
+        path: /etc/compute-blade-agent/config.yaml
+        regexp: '^stealth_mode:\s*false'
+        line: 'stealth_mode: true'
+        state: present
+      register: agent_stealth
+
+    - name: Fix Go config for gRPC local socket
+      lineinfile:
+        path: /root/.config/bladectl/config.yaml
+        regexp: '^server:\s*/tmp/compute-blade-agent\.sock'
+        line: 'server: unix:///tmp/compute-blade-agent.sock'
+        state: present
+      register: bladectl_config
 
     - name: Reboot the blade if UART config changed
       ansible.builtin.reboot:
         msg: "Rebooting to apply enable_uart=1 changes"
-      when: agent_install_output.changed
+      when: >
+        (agent_install_output.changed | default(false)) or
+        agent_stealth.changed or
+        bladectl_config.changed
