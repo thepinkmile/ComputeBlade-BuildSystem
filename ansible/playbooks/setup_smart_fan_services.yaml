@@ -4,175 +4,70 @@
   become: true
 
   tasks:
-    - name: Configure UART for CM5 modules
-      block:
-        - name: Ensure UART4 is enabled for CM5
-          lineinfile:
-            path: /boot/firmware/config.txt
-            regexp: '^dtparam=uart4='
-            line: 'dtparam=uart4=on'
-            state: present
-          register: cm5_uart
+    - name: Install required system packages
+      apt:
+        name:
+          - curl
+          - git
+        state: present
+        update_cache: yes
 
-        - name: Define expected serial device path for CM5
-          set_fact:
-            expected_serial_port: "/dev/ttyAMA4"
-            console_service: "serial-getty@ttyAMA4.service"
-      when: module_type == 'cm5'
-
-    - name: Configure UART for CM4 modules
+    - name: Configure Fan Module UART
       block:
-        - name: Ensure UART is enabled for CM4
+        - name: Ensure UART is enabled
           lineinfile:
             path: /boot/firmware/config.txt
             regexp: '^enable_uart='
             line: 'enable_uart=1'
+            insertafter: '^\[all\]'
             state: present
-          register: cm4_uart
+          register: uart_enabled
 
-        - name: Ensure UART5 overlay is enabled for CM4
+        - name: Ensure UART overlay is enabled for CM5
+          lineinfile:
+            path: /boot/firmware/config.txt
+            regexp: '^dtoverlay=uart4-pi5'
+            line: 'dtoverlay=uart4-pi5'
+            insertafter: '^\[cm5\]'
+            state: present
+          register: cm5_overlay
+          when: module_type == 'cm5'
+
+        - name: Ensure UART overlay is enabled for CM4
           lineinfile:
             path: /boot/firmware/config.txt
             regexp: '^dtoverlay=uart5'
             line: 'dtoverlay=uart5'
-            insertafter: '^enable_uart=1'
+            insertafter: '^\[cm4\]'
             state: present
           register: cm4_overlay
+          when: module_type == 'cm4'
 
-        - name: Define expected serial device path for CM4
-          set_fact:
-            expected_serial_port: "/dev/ttyAMA5"
-            console_service: "serial-getty@ttyAMA5.service"
-      when: module_type == 'cm4'
+        - name: Reboot the blade if UART config changed
+          ansible.builtin.reboot:
+            msg: "Rebooting to apply enable_uart=1 changes"
+          when: >
+            uart_enabled.changed or
+            (module_type == 'cm5' and cm5_overlay.changed) or
+            (module_type == 'cm4' and cm4_overlay.changed)
+
+    - name: Download the Compute Blade Agent autoinstall script
+      get_url:
+        url: "https://raw.githubusercontent.com/compute-blade-community/compute-blade-agent/main/hack/autoinstall.sh"
+        dest: "/tmp/autoinstall.sh"
+        mode: '0755'
+
+    - name: Execute the autoinstall script to initialize fan configurations
+      shell: "/tmp/autoinstall.sh"
+      register: agent_install_output
+      changed_when: "'Installing' in agent_install_output.stdout"
+
+    - name: Clean up the installer footprint from temporal storage
+      file:
+        path: /tmp/autoinstall.sh
+        state: absent
 
     - name: Reboot the blade if UART config changed
       ansible.builtin.reboot:
-        reboot_timeout: 300
         msg: "Rebooting to apply enable_uart=1 changes"
-      when: >
-        (module_type == 'cm5' and cm5_uart.changed) or
-        (module_type == 'cm4' and (cm4_uart.changed or cm4_overlay.changed))
-
-    - name: Stop and disable OS serial console service to free up the hardware port
-      systemd:
-        name: "{{ console_service }}"
-        state: stopped
-        enabled: no
-      failed_when: false
-
-    - name: Install required system packages
-      apt:
-        name:
-          - git
-          - python3-serial
-          - python3-gpiozero
-        state: present
-        update_cache: yes
-
-    - name: Direct Serial Handshake Check against Uptime Lab RP2040 Firmware
-      shell: |
-        python3 -c "
-        import serial, sys, time
-        
-        port_path = '{{ expected_serial_port }}'
-        print(f'[DEBUG] Attempting to open serial connection on: {port_path}')
-        
-        try:
-            # Open the dynamic interface with a strict 2-second timeout window
-            ser = serial.Serial(port_path, 9600, timeout=2)
-            print(f'[DEBUG] Port {port_path} successfully opened in OS.')
-            
-            # Clear out any noise spikes from the system boot
-            ser.reset_input_buffer()
-            ser.reset_output_buffer()
-            print('[DEBUG] Serial input/output buffers flushed.')
-            
-            # Send an explicit empty newline command block to see if the RP2040 firmware wakes up
-            print('[DEBUG] Transmitting line break (\\n) payload to probe for RP2040...')
-            ser.write(b'\n')
-            time.sleep(0.5)
-            
-            # The CircuitPython firmware echo/handshake loop sends data back upon processing text. 
-            # If nothing is connected, the line stays completely dead (in_waiting == 0)
-            bytes_waiting = ser.in_waiting
-            print(f'[DEBUG] Probe complete. Bytes waiting in buffer: {bytes_waiting}')
-            if bytes_waiting > 0:
-                incoming_data = ser.read(bytes_waiting)
-                print(f'[SUCCESS] Smart Fan response data intercepted: {incoming_data}')
-                sys.exit(0)  # Smart Fan detected successfully
-            else:
-                print('[FAILURE] Connection opened, but no bytes were returned. Line is floating/empty (STA).')
-                sys.exit(1)  # No active microcontroller responding (STA/Empty)
-        except Exception:
-            print(f'[ERROR] Failed to communicate or initialize port interface. Exception: {str(e)}')
-            sys.exit(1)      # Failure to interact with device pathway defaults to STA
-        "
-      failed_when: false
-      register: fan_handshake_probe
-
-    - name: Output Detailed Handshake Diagnostic Logs
-      debug:
-        var: fan_handshake_probe.stdout_lines
-
-    - name: Set structural properties for Smart Fan Unit hardware
-      set_fact:
-        fan_type: "smart"
-        repo_url: "https://github.com/uptime-lab/circuitpy-fan-unit.git"
-        repo_branch: "main"
-        install_dir: "/opt/circuitpy-fan-unit"
-        exec_cmd: "/usr/bin/python3 /opt/circuitpy-fan-unit/host_daemon.py"
-      when: fan_handshake_probe.rc == 0
-
-    - name: Set structural properties for Standard (STA) Fan Unit hardware
-      set_fact:
-        fan_type: "sta"
-        repo_url: "https://github.com/uptime-lab/compute-blade-pwm-fan-control.git"
-        repo_branch: "master"
-        install_dir: "/opt/compute-blade-pwm-fan-control"
-        exec_cmd: "/usr/bin/python3 /opt/compute-blade-pwm-fan-control/fan_control.py"
-      when: fan_handshake_probe.rc != 0
-
-    - name: Log discovered hardware matrix profile
-      debug:
-        msg: "Target mapped as {{ module_type | upper }} using a [{{ fan_type | upper }}] Fan Unit."
-
-    - name: Clean up any old competing systemd units if hardware was swapped
-      systemd:
-        name: compute-blade-fan
-        state: stopped
-        enabled: no
-      failed_when: false
-
-    - name: Clone the fan control repository
-      git:
-        repo: "{{ repo_url }}"
-        dest: "{{ install_dir }}"
-        version: "{{ repo_branch }}"
-        force: yes
-        accept_hostkey: yes
-
-    - name: Create systemd service file for fan control
-      copy:
-        dest: /etc/systemd/system/compute-blade-fan.service
-        content: |
-          [Unit]
-          Description=Compute Blade Dynamic Fan Controller ({{ fan_type | upper }})
-          After=network.target
-          
-          [Service]
-          Type=simple
-          User=root
-          WorkingDirectory={{ install_dir }}
-          ExecStart={{ exec_cmd }}
-          Restart=always
-          RestartSec=5
-          
-          [Install]
-          WantedBy=multi-user.target
-
-    - name: Force systemd to reload configs, enable and start fan service
-      systemd:
-        name: compute-blade-fan
-        daemon_reload: yes
-        enabled: yes
-        state: restarted
+      when: agent_install_output.changed
