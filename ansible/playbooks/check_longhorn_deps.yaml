@@ -3,15 +3,18 @@
   hosts: cluster
   become: true
   tasks:
-    - name: Install open-iscsi and NFS client utilities
-      ansible.builtin.package:
-        name:
-          - open-iscsi
-          - nfs-common
-        state: present
+    - name: Install Longhorn dependencies
+      block:
+        - name: Install open-iscsi and NFS client utilities
+          ansible.builtin.package:
+            name:
+              - open-iscsi
+              - nfs-common
+            state: present
 
-    - name: Enable and start iSCSI daemon
-      ansible.builtin.service:
-        name: iscsid
-        enabled: true
-        state: started
+        - name: Enable and start iSCSI daemon
+          ansible.builtin.service:
+            name: iscsid
+            enabled: true
+            state: started
+      when: nvme_gb | default(0) | int > 0
