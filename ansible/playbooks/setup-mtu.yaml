@@ -1,7 +1,8 @@
 ---
-- name: Configuring Jumbo Frames on Nodes
-  hosts: computeblades
+- name: Configuring Jumbo Frames and VLAN Trunks on Nodes
+  hosts: cluster
   become: true
+
   tasks:
     - name: Deploy Netplan VLAN trunk configuration
       ansible.builtin.copy:
@@ -15,7 +16,7 @@
             renderer: NetworkManager
             ethernets:
               eth0:
-                dhcp4: no
+                dhcp4: yes
                 mtu: 9000
             vlans:
               eth0.10: # Dedicated K8s Pod/Service Network Plane
@@ -28,15 +29,14 @@
                 link: eth0
                 dhcp4: yes
                 mtu: 9000
-      notify: Reload Physical Infrastructure
+      register: network_config
 
-  handlers:
-    - name: Reload Physical Infrastructure
-      ansible.builtin.shell: |
-        netplan generate
-        netplan apply
-      notify: Roll Cluster Nodes
+    - name: Pre-generate Netplan configuration artifacts to validate yaml syntax
+      ansible.builtin.command: "netplan generate"
+      when: network_config.changed
 
-    - name: Roll Cluster Nodes
+    - name: Reboot node safely if network definitions were modified
       ansible.builtin.reboot:
+        msg: "Applying Jumbo Frames and VLAN configurations via system boot"
         reboot_timeout: 300
+      when: network_config.changed
