@@ -17,22 +17,36 @@
             ethernets:
               eth0:
                 dhcp4: yes
+                dhcp-identifier: mac 
                 mtu: 9000
             vlans:
               eth0.10: # Dedicated K8s Pod/Service Network Plane
                 id: 10
                 link: eth0
                 dhcp4: yes
+                dhcp-identifier: mac 
                 mtu: 9000
               eth0.20: # Secondary Network Plane (Storage / NVMe M.2)
                 id: 20
                 link: eth0
                 dhcp4: yes
+                dhcp-identifier: mac 
                 mtu: 9000
       register: network_config
 
     - name: Pre-generate Netplan configuration artifacts to validate yaml syntax
       ansible.builtin.command: "netplan generate"
+      when: network_config.changed
+
+    - name: Force NetworkManager to reload connection profiles from disk
+      ansible.builtin.command: "nmcli connection reload"
+      when: network_config.changed
+
+    - name: Ensure autoconnect properties for the VLAN interfaces
+      ansible.builtin.command: "nmcli connection modify {{ item }} connection.autoconnect yes"
+      loop:
+        - "netplan-eth0.10"
+        - "netplan-eth0.20"
       when: network_config.changed
 
     - name: Reboot node safely if network definitions were modified
