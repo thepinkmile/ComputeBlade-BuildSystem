@@ -1,0 +1,6 @@
+---
+# Global variables for the entire infrastructure cluster
+
+jumbo_supported_modules:
+  - cm5
+  - pi5

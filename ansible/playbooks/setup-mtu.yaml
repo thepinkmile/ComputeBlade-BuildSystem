@@ -4,53 +4,41 @@
   become: true
 
   tasks:
-    - name: Deploy Netplan VLAN trunk configuration
-      ansible.builtin.copy:
-        dest: /etc/netplan/50-cloud-init.yaml
-        owner: root
-        group: root
-        mode: '0644'
-        content: |
-          network:
-            version: 2
-            renderer: NetworkManager
-            ethernets:
-              eth0:
-                dhcp4: yes
-                dhcp-identifier: mac 
-                mtu: 9000
-            vlans:
-              eth0.10: # Dedicated K8s Pod/Service Network Plane
-                id: 10
-                link: eth0
-                dhcp4: yes
-                dhcp-identifier: mac 
-                mtu: 9000
-              eth0.20: # Secondary Network Plane (Storage / NVMe M.2)
-                id: 20
-                link: eth0
-                dhcp4: yes
-                dhcp-identifier: mac 
-                mtu: 9000
-      register: network_config
+    - name: Configure Base Trunk Ethernet
+      community.general.nmcli:
+        conn_name: "trunk-eth0"
+        ifname: eth0
+        type: ethernet
+        state: present
+        mtu: "{{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}"
+      notify: Reload NetworkManager
 
-    - name: Pre-generate Netplan configuration artifacts to validate yaml syntax
-      ansible.builtin.command: "netplan generate"
-      when: network_config.changed
+    - name: Configure VLAN 10
+      community.general.nmcli:
+        conn_name: "vlan-10"
+        ifname: eth0.10
+        type: vlan
+        vlanid: 10
+        vlandev: eth0
+        state: present
+        mac: "02:{{ ansible_facts['eth0']['macaddress'][3:14] }}:10"
+        mtu: "{{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}"
+      notify: Reload NetworkManager
 
-    - name: Force NetworkManager to reload connection profiles from disk
-      ansible.builtin.command: "nmcli connection reload"
-      when: network_config.changed
+    - name: Configure VLAN 20
+      community.general.nmcli:
+        conn_name: "vlan-20"
+        ifname: eth0.20
+        type: vlan
+        vlanid: 20
+        vlandev: eth0
+        state: present
+        mac: "02:{{ ansible_facts['eth0']['macaddress'][3:14] }}:20"
+        mtu: "{{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}"
+      notify: Reload NetworkManager
 
-    - name: Ensure autoconnect properties for the VLAN interfaces
-      ansible.builtin.command: "nmcli connection modify {{ item }} connection.autoconnect yes"
-      loop:
-        - "netplan-eth0.10"
-        - "netplan-eth0.20"
-      when: network_config.changed
-
-    - name: Reboot node safely if network definitions were modified
-      ansible.builtin.reboot:
-        msg: "Applying Jumbo Frames and VLAN configurations via system boot"
-        reboot_timeout: 300
-      when: network_config.changed
+  handlers:
+    - name: Reload NetworkManager
+      ansible.builtin.systemd:
+        name: NetworkManager
+        state: restarted
