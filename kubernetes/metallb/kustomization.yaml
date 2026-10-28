@@ -6,6 +6,34 @@ helmCharts:
     version: 0.14.8
     releaseName: metallb
     namespace: metallb-system
+  #- name: cilium
+  #  repo: https://cilium.io
+  #  version: 1.15.5
+  #  releaseName: cilium
+  #  namespace: kube-system
+  #  valuesInline:
+  #    mtu: 8950
+  #    operator:
+  #      replicas: 2
+  #    ipam:
+  #      mode: "cluster-pool"
+  #      operator:
+  #        clusterPoolIPv4PodCIDRList: ["10.244.0.0/16"]
+  #        clusterPoolIPv4MaskSize: 24
+  #    kubeProxyReplacement: "true"
+  #    k8sServiceHost: "10.10.10.1"
+  #    k8sServicePort: "6443"
+  #   
+  #    # ========================================================
+  #    # CRITICAL METALLB COEXISTENCE CONFIGS FOR EBPF
+  #    # ========================================================
+  #    # Prevents Cilium from stealing host routing tables used by MetalLB speakers
+  #    bpf:
+  #      masquerade: true
+  #    hostServices:
+  #      enabled: true
+  #    nodePort:
+  #      enabled: true
 resources:
   - ip_pools.yaml
 namespace: metallb-system

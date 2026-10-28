@@ -1,0 +1,52 @@
+# Enable ssh connectivity
+touch /boot/firmware/ssh
+
+# get module details (serial number => TARGET_DEVICE_SERIAL)
+cat /proc/cpuinfo
+
+# check total RAM
+free -h
+
+# check eMMC and NVMe sizes
+lsblk
+
+# create first-boot cript
+sudo cat << EOF > "/boot/firmware/user-data"
+#cloud-config
+hostname: "cm5-${TARGET_DEVICE_SERIAL}"
+create_hostname_file: true
+manage_etc_hosts: true
+
+package_update: false
+package_upgrade: false
+
+rpi:
+  interfaces:
+    spi: true
+    i2c: true
+    serial: true
+
+timezone: Europe/London
+keyboard:
+  model: pc105
+  layout: "gb"
+
+users:
+  - name: ansible
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDvhe74ASyeVx0lX6JZGFF32Vq8WpT1tq8FBYiOv/sH43J7ePTZ+R4y/JoPxiZSy3MDpW5X3LnsTY/9zKVFwjnR+Dy95O1415KUlnUXVV+vhXfvcyTYT2vra6lIbQAHgev7Z4wYv1jD8tCF9JF0dngCEkD86X+brwxUxuLk9qz+bJDAmvr9D1DwG1cuWflm4wCTBKrfxvAXejmcJKirNnEN+08reMsIkAyXxzMBJBcgfMKYUgw4VF146eb73f80vGJ1srYyh1bc4AGqa51IktxXyMHeUT+EzAKxDPU0pPIvY7WyzV5YJUIaPvPavBWWf/DvBAuacCzec7l6toJ5oQx5XK1IBq6PXMzSycmLFR1CKHHeZUfCgXy3kz0VtBO2WN6izLqI5b1b4+WaOUbzZRT1TKMyRgn4UdjgUNl+o37oT6epN3Obn7LeapKsfA1yUkhdK+R/zVqC3PmNmmMXpEOhCQ7qhXg14MbIS9gLU2IbAiUwVCSD5V/dzwf8nBgQA3YU7lPsSdHuq0c5qpxh5unjNthX9eG9lFlw4GvTLn160HH2U9LZMe9I6Xj3KLnQro8Cm+lutdoum1kUhBsfq9JyBQz/+PuOfovt/FCx4o0bjLSRQSq37uBuBjSbtkWB48i97SLJRdQ3uXfcFM2dCI7UktXRzF7GW1cTNH11t74FVQ== izzyonstage@hotmail.com
+
+chpasswd:
+  expire: false
+  users:
+  - {name: ansible, password: D00wn33rg.1182, type: text}
+ssh_pwauth: true
+
+runcmd:
+  - systemctl restart avahi-daemon
+EOF
+
+# reset system to re-run first-boot script
+sudo cloud-init clean --logs && sudo reboot
