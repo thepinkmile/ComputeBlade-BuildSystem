@@ -2,6 +2,7 @@
 - name: Prepare Local NVMe Storage for Longhorn
   hosts: cluster
   become: true
+  gather_facts: true
 
   tasks:
     - name: Configure and Mount NVMe Storage

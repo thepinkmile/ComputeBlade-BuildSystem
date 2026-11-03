@@ -2,6 +2,8 @@
 - name: Install Bare-Metal Dependencies for Longhorn Engine
   hosts: cluster
   become: true
+  gather_facts: true
+
   tasks:
     - name: Install Longhorn dependencies
       block:

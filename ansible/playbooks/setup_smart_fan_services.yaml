@@ -2,6 +2,7 @@
 - name: Bootstrapping ComputeBlade Hosts on Raspberry Pi OS Trixie
   hosts: cluster
   become: true
+  gather_facts: true
 
   tasks:
     - name: Install required system packages
