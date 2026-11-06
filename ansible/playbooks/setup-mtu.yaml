@@ -2,43 +2,88 @@
 - name: Configuring Jumbo Frames and VLAN Trunks on Nodes
   hosts: cluster
   become: true
+  gather_facts: true
+
+  vars:
+    interface_phys: "eth0"
+    mtu_size: {{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}
 
   tasks:
-    - name: Configure Base Trunk Ethernet
-      community.general.nmcli:
-        conn_name: "trunk-eth0"
-        ifname: eth0
-        type: ethernet
-        state: present
-        mtu: "{{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}"
-      notify: Reload NetworkManager
+    - name: Parse hardware MAC address suffix dynamically
+      set_fact:
+        mac_suffix: "{{ ansible_facts[interface_phys]['macaddress'].split(':')[2:] | join(':') }}"
 
-    - name: Configure VLAN 10
+    - name: Atomic cycle physical interface to force MTU 9000
+      ansible.builtin.shell: >
+        ip link set {{ interface_phys }} down && 
+        ip link set {{ interface_phys }} mtu {{ mtu_size }} && 
+        ip link set {{ interface_phys }} up
+      async: 10
+      poll: 0
+      changed_when: true
+
+    - name: Settle cluster node network connections
+      ansible.builtin.pause:
+        seconds: 10
+
+    # --- VLAN 10 DEPLOYMENT (K8S PODS) ---
+    - name: Build VLAN 10 Base Link Profile
+      community.general.nmcli:
+        conn_name: "vlan-10-base"
+        ifname: "{{ interface_phys }}.10"
+        type: vlan
+        vlan_id: 10
+        vlan_dev: "{{ interface_phys }}"
+        mtu: "{{ mtu_size }}"
+        ip4: "disabled"
+        ip6: "ignore"
+        state: present
+
+    - name: Build VLAN 10 MACVLAN Interface with Unique MAC Architecture
       community.general.nmcli:
         conn_name: "vlan-10"
-        ifname: eth0.10
-        type: vlan
-        vlanid: 10
-        vlandev: eth0
+        ifname: "mv-{{ interface_phys }}.10"
+        type: macvlan
+        macvlan_mode: bridge
+        macvlan_dev: "{{ interface_phys }}.10"
+        cloned_mac: "02:10:{{ mac_suffix }}"
+        mtu: "{{ mtu_size }}"
+        never_default4: true
+        route_metric4: 210
         state: present
-        mac: "02:{{ ansible_facts['eth0']['macaddress'][3:14] }}:10"
-        mtu: "{{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}"
-      notify: Reload NetworkManager
 
-    - name: Configure VLAN 20
+    # --- VLAN 20 DEPLOYMENT (K8S STORAGE) ---
+    - name: Build VLAN 20 Base Link Profile
+      community.general.nmcli:
+        conn_name: "vlan-20-base"
+        ifname: "{{ interface_phys }}.20"
+        type: vlan
+        vlan_id: 20
+        vlan_dev: "{{ interface_phys }}"
+        mtu: "{{ mtu_size }}"
+        ip4: "disabled"
+        ip6: "ignore"
+        state: present
+
+    - name: Build VLAN 20 MACVLAN Interface with Unique MAC Architecture
       community.general.nmcli:
         conn_name: "vlan-20"
-        ifname: eth0.20
-        type: vlan
-        vlanid: 20
-        vlandev: eth0
+        ifname: "mv-{{ interface_phys }}.20"
+        type: macvlan
+        macvlan_mode: bridge
+        macvlan_dev: "{{ interface_phys }}.20"
+        cloned_mac: "02:20:{{ mac_suffix }}"
+        mtu: "{{ mtu_size }}"
+        never_default4: true
+        route_metric4: 220
         state: present
-        mac: "02:{{ ansible_facts['eth0']['macaddress'][3:14] }}:20"
-        mtu: "{{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}"
-      notify: Reload NetworkManager
 
-  handlers:
-    - name: Reload NetworkManager
-      ansible.builtin.systemd:
-        name: NetworkManager
-        state: restarted
+    # --- INTERFACE LAYER ACTIVATION ---
+    - name: Bring cluster sub-interfaces online sequentially
+      ansible.builtin.command: "nmcli connection up {{ item }}"
+      loop:
+        - "vlan-10-base"
+        - "vlan-10"
+        - "vlan-20-base"
+        - "vlan-20"
+      changed_when: false
