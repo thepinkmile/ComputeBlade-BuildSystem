@@ -7,6 +7,8 @@
   vars:
     interface_phys: "eth0"
     mtu_size: {{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}
+    vlan10_gateway: "192.168.10.1"
+    vlan20_gateway: "192.168.20.1"
 
   tasks:
     - name: Parse hardware MAC address suffix dynamically
@@ -87,3 +89,24 @@
         - "vlan-20-base"
         - "vlan-20"
       changed_when: false
+
+    - name: Wait for DHCP allocation to settle
+      ansible.builtin.pause:
+        seconds: 10
+
+    # --- STEP 5: AUTOMATED NETWORK VALIDATION ---
+    - name: Validate VLAN 10 Egress to OpenWRT Gateway
+      ansible.builtin.command: "ping -I mv-{{ interface_phys }}.10 {{ vlan10_gateway }} -c 3"
+      register: vlan10_ping_result
+      failed_when: vlan10_ping_result.rc != 0
+      changed_when: false
+
+    - name: Validate VLAN 20 Egress to OpenWRT Gateway
+      ansible.builtin.command: "ping -I mv-{{ interface_phys }}.20 {{ vlan20_gateway }} -c 3"
+      register: vlan20_ping_result
+      failed_when: vlan20_ping_result.rc != 0
+      changed_when: false
+
+    - name: Log Successful Connectivity
+      ansible.builtin.debug:
+        msg: "Success! Node verified online with MTU {{ mtu_size }} across all cluster VLAN spaces."
