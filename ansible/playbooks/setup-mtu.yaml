@@ -7,6 +7,14 @@
   vars:
     interface_phys: "eth0"
     mtu_size: "{{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}"
+    vlans:
+      - vlan_id: 10
+        gateway: "192.168.10.1"
+        conn_name: vlan-10
+      - vlan_id: 20
+        gateway: "192.168.20.1"
+        conn_name: vlan-20
+    
     vlan10_gateway: "192.168.10.1"
     vlan20_gateway: "192.168.20.1"
 
@@ -28,85 +36,43 @@
       ansible.builtin.pause:
         seconds: 10
 
-    # --- VLAN 10 DEPLOYMENT (K8S PODS) ---
-    - name: Build VLAN 10 Base Link Profile
+    - name: Build VLAN Base Link Profiles
       community.general.nmcli:
-        conn_name: "vlan-10-base"
-        ifname: "{{ interface_phys }}.10"
+        conn_name: "{{ item.conn_name }}-base"
+        ifname: "{{ interface_phys }}.{{ item.vlan_id }}"
         type: vlan
-        vlan_id: 10
-        vlan_dev: "{{ interface_phys }}"
+        vlanid: "{{ item.vlan_id }}"
+        vlandev: "{{ interface_phys }}"
         mtu: "{{ mtu_size }}"
         ip4: "disabled"
         ip6: "ignore"
         state: present
+        autoconnect: true
+      loop: "{{ vlans }}"
 
-    - name: Build VLAN 10 MACVLAN Interface with Unique MAC Architecture
+    - name: Build MACVLAN Interfaces with Unique MAC Architecture
       community.general.nmcli:
-        conn_name: "vlan-10"
-        ifname: "mv-{{ interface_phys }}.10"
+        conn_name: "{{ item.conn_name }}"
+        ifname: "mv-{{ interface_phys }}.{{ item.vlan_id }}"
         type: macvlan
-        macvlan_mode: bridge
-        macvlan_dev: "{{ interface_phys }}.10"
-        cloned_mac: "02:10:{{ mac_suffix }}"
+        cloned_mac: "02:{{ item.vlan_id }}:{{ mac_suffix }}"
+        macvlan:
+          mode: 2 # Value 2 explicitly specifies 'bridge' mode to the module compiler
+          parent: "{{ interface_phys }}.{{ item.vlan_id }}"
         mtu: "{{ mtu_size }}"
         never_default4: true
         route_metric4: 210
         state: present
-
-    # --- VLAN 20 DEPLOYMENT (K8S STORAGE) ---
-    - name: Build VLAN 20 Base Link Profile
-      community.general.nmcli:
-        conn_name: "vlan-20-base"
-        ifname: "{{ interface_phys }}.20"
-        type: vlan
-        vlan_id: 20
-        vlan_dev: "{{ interface_phys }}"
-        mtu: "{{ mtu_size }}"
-        ip4: "disabled"
-        ip6: "ignore"
-        state: present
-
-    - name: Build VLAN 20 MACVLAN Interface with Unique MAC Architecture
-      community.general.nmcli:
-        conn_name: "vlan-20"
-        ifname: "mv-{{ interface_phys }}.20"
-        type: macvlan
-        macvlan_mode: bridge
-        macvlan_dev: "{{ interface_phys }}.20"
-        cloned_mac: "02:20:{{ mac_suffix }}"
-        mtu: "{{ mtu_size }}"
-        never_default4: true
-        route_metric4: 220
-        state: present
-
-    # --- INTERFACE LAYER ACTIVATION ---
-    - name: Bring cluster sub-interfaces online sequentially
-      ansible.builtin.command: "nmcli connection up {{ item }}"
-      loop:
-        - "vlan-10-base"
-        - "vlan-10"
-        - "vlan-20-base"
-        - "vlan-20"
-      changed_when: false
+        autoconnect: true
+      loop: "{{ vlans }}"
 
     - name: Wait for DHCP allocation to settle
       ansible.builtin.pause:
         seconds: 10
 
-    # --- STEP 5: AUTOMATED NETWORK VALIDATION ---
     - name: Validate VLAN 10 Egress to OpenWRT Gateway
-      ansible.builtin.command: "ping -I mv-{{ interface_phys }}.10 {{ vlan10_gateway }} -c 3"
-      register: vlan10_ping_result
-      failed_when: vlan10_ping_result.rc != 0
+      ansible.builtin.command: "ping -I mv-{{ interface_phys }}.{{ item.vlan_id }} {{ item.gateway }} -c 3"
+      register: ping_result
+      failed_when: ping_result.rc != 0
       changed_when: false
-
-    - name: Validate VLAN 20 Egress to OpenWRT Gateway
-      ansible.builtin.command: "ping -I mv-{{ interface_phys }}.20 {{ vlan20_gateway }} -c 3"
-      register: vlan20_ping_result
-      failed_when: vlan20_ping_result.rc != 0
-      changed_when: false
-
-    - name: Log Successful Connectivity
-      ansible.builtin.debug:
-        msg: "Success! Node verified online with MTU {{ mtu_size }} across all cluster VLAN spaces."
+      loop: "{{ vlans }}"
