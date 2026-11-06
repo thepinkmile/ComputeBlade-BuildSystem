@@ -6,7 +6,7 @@
 
   vars:
     interface_phys: "eth0"
-    mtu_size: {{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}
+    mtu_size: "{{ 9000 if (module_type in jumbo_supported_modules) else 1500 }}"
     vlan10_gateway: "192.168.10.1"
     vlan20_gateway: "192.168.20.1"
 
