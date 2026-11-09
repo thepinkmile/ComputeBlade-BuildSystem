@@ -11,12 +11,11 @@
       - vlan_id: 10
         gateway: "192.168.10.1"
         conn_name: vlan-10
+        hostname_suffix: "-pods"
       - vlan_id: 20
         gateway: "192.168.20.1"
         conn_name: vlan-20
-    
-    vlan10_gateway: "192.168.10.1"
-    vlan20_gateway: "192.168.20.1"
+        hostname_suffix: "-storage"
 
   tasks:
     - name: Parse hardware MAC address suffix dynamically
@@ -36,42 +35,50 @@
       ansible.builtin.pause:
         seconds: 10
 
-    - name: Build VLAN Base Link Profiles
+    - name: Create the VLAN interface profile with DHCP and IPv6 disabled
       community.general.nmcli:
-        conn_name: "{{ item.conn_name }}-base"
+        conn_name: "vlan{{ item.vlan_id }}"
         ifname: "{{ interface_phys }}.{{ item.vlan_id }}"
         type: vlan
         vlanid: "{{ item.vlan_id }}"
-        vlandev: "{{ interface_phys }}"
+        vlandev: "eth0"
         mtu: "{{ mtu_size }}"
-        ip4: "disabled"
-        ip6: "ignore"
+        method4: auto
+        method6: disabled
+        dhcp_client_id: "{{ ansible_hostname }}{{ item.hostname_suffix }}"
         state: present
-        autoconnect: true
       loop: "{{ vlans }}"
 
-    - name: Build MACVLAN Interfaces with Unique MAC Architecture
-      community.general.nmcli:
-        conn_name: "{{ item.conn_name }}"
-        ifname: "mv-{{ interface_phys }}.{{ item.vlan_id }}"
-        type: macvlan
-        cloned_mac: "02:{{ item.vlan_id }}:{{ mac_suffix }}"
-        macvlan:
-          mode: 2 # Value 2 explicitly specifies 'bridge' mode to the module compiler
-          parent: "{{ interface_phys }}.{{ item.vlan_id }}"
-        mtu: "{{ mtu_size }}"
-        never_default4: true
-        route_metric4: 210
-        state: present
-        autoconnect: true
+    - name: Check current cloned MAC address setting using strict property
+      ansible.builtin.command: >
+        nmcli -g 802-3-ethernet.cloned-mac-address connection show "vlan{{ item.vlan_id }}"
+      register: current_mac
+      changed_when: false
+      failed_when: false
       loop: "{{ vlans }}"
+
+    - name: Apply custom cloned MAC address if it differs
+      ansible.builtin.command: >
+        nmcli connection modify "vlan{{ item.item.vlan_id }}" 
+        802-3-ethernet.cloned-mac-address "02:{{ item.item.vlan_id }}:{{ mac_suffix }}" 
+        ipv4.dhcp-hostname "{{ ansible_hostname }}{{ item.item.hostname_suffix }}"
+      when: item.stdout != "02:" ~ item.item.vlan_id | string ~ ":" ~ mac_suffix
+      register: nm_modify
+      loop: "{{ current_mac.results }}"
+
+    - name: Activate connection to trigger dnsmasq DHCP lease
+      community.general.nmcli:
+        conn_name: "vlan{{ item.item.vlan_id }}"
+        state: up
+      when: nm_modify.changed or item.rc != 0
+      loop: "{{ current_mac.results }}"
 
     - name: Wait for DHCP allocation to settle
       ansible.builtin.pause:
         seconds: 10
 
-    - name: Validate VLAN 10 Egress to OpenWRT Gateway
-      ansible.builtin.command: "ping -I mv-{{ interface_phys }}.{{ item.vlan_id }} {{ item.gateway }} -c 3"
+    - name: Validate VLAN Egress to OpenWRT Gateway
+      ansible.builtin.command: "ping -I {{ interface_phys }}.{{ item.vlan_id }} {{ item.gateway }} -c 3"
       register: ping_result
       failed_when: ping_result.rc != 0
       changed_when: false
