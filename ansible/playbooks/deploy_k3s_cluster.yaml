@@ -2,8 +2,10 @@
 - name: Bootstrap K3s Kubernetes Control Plane
   hosts: coordinator
   become: true
+
   vars:
-    private_vlan_interface: "eth0.100"
+    private_vlan_interface: "eth0.10"
+
   tasks:
     - name: Download and install K3s Server
       ansible.builtin.shell: |
@@ -21,20 +23,20 @@
         src: /var/lib/rancher/k3s/server/node-token
       register: k3s_token_b64
 
-    - name: Set cluster token fact for worker registration
+    - name: Set cluster token fact on the coordinator host
       ansible.builtin.set_fact:
         k3s_cluster_token: "{{ k3s_token_b64.content | base64decode | trim }}"
-        delegate_to: localhost
-        delegate_facts: true
 
 - name: Join Worker ComputeBlades to Kubernetes Cluster
   hosts: workers
   become: true
+
   vars:
-    # Pulls the token dynamically from the coordinator task
-    cluster_token: "{{ hostvars['localhost']['k3s_cluster_token'] }}"
     coordinator_host: "{{ groups['coordinator'][0] }}"
-    private_vlan_interface: "eth0.100"
+    # Pulls the token dynamically from the coordinator host's facts
+    cluster_token: "{{ hostvars[coordinator_host]['k3s_cluster_token'] }}"
+    private_vlan_interface: "eth0.10"
+
   tasks:
     - name: Get coordinator private VLAN IP address
       ansible.builtin.set_fact:
