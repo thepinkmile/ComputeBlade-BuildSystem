@@ -25,8 +25,20 @@
 
   vars:
     private_vlan_interface: "eth0.10"
+    k3s_version: "v1.37.2+k3s1"
 
   tasks:
+    - name: Check if K3s server service is already running
+      ansible.builtin.systemd:
+        name: k3s
+      register: k3s_server_status
+
+    - name: Check current K3s server binary version
+      ansible.builtin.command: k3s --version
+      register: k3s_server_version
+      failed_when: false
+      changed_when: false
+
     - name: Download and install K3s Server
       ansible.builtin.shell: |
         curl -sfL https://get.k3s.io | sh -s - server \
@@ -35,8 +47,10 @@
           --flannel-iface={{private_vlan_interface}} \
           --disable servicelb \
           --disable traefik
-      args:
-        creates: /usr/local/bin/k3s
+      when: >
+        k3s_server_status.status.ActiveState != 'active' or
+        k3s_server_version.rc != 0 or
+        k3s_version not in k3s_server_version.stdout
 
     - name: Extract the Cluster Join Token
       ansible.builtin.slurp:
@@ -45,27 +59,69 @@
 
     - name: Set cluster token fact on the coordinator host
       ansible.builtin.set_fact:
-        k3s_cluster_token: "{{ k3s_token_b64.content | base64decode | trim }}"
+        k3s_cluster_token: "{{ k3s_token_b64.content | b64decode | trim }}"
 
 - name: Join Worker ComputeBlades to Kubernetes Cluster
   hosts: workers
   become: true
+  serial: "20%"
 
   vars:
     coordinator_host: "{{ groups['coordinator'][0] }}"
-    # Pulls the token dynamically from the coordinator host's facts
-    cluster_token: "{{ hostvars[coordinator_host]['k3s_cluster_token'] }}"
     private_vlan_interface: "eth0.10"
+    k3s_version: "v1.37.2+k3s1"
 
   tasks:
+    - name: Ensure coordinator token fact is available
+      ansible.builtin.setup:
+        delegate_to: "{{ coordinator_host }}"
+        delegate_facts: true
+      when: hostvars[coordinator_host]['k3s_cluster_token'] is undefined
+
     - name: Get coordinator private VLAN IP address
       ansible.builtin.set_fact:
         coordinator_private_ip: "{{ hostvars[coordinator_host]['ansible_facts'][private_vlan_interface]['ipv4']['address'] }}"
 
+    - name: Check if K3s agent service is already running
+      ansible.builtin.systemd:
+        name: k3s-agent
+      register: k3s_agent_status
+
+    - name: Check current K3s agent binary version
+      ansible.builtin.command: k3s-agent --version
+      register: k3s_agent_version
+      failed_when: false
+      changed_when: false
+
+    - name: Cordon and Drain ComputeBlade
+      ansible.builtin.command: >
+        kubectl drain {{ inventory_hostname | replace('.local', '-pods.local') }}
+        --ignore-daemonsets
+        --delete-emptydir-data
+        --force
+      delegate_to: "{{ coordinator_host }}"
+      changed_when: true
+      when: >
+        k3s_agent_status.status.ActiveState == 'active' and
+        k3s_agent_version.rc == 0 and
+        k3s_version not in k3s_agent_version.stdout
+
     - name: Download and install K3s Agent on workers
       ansible.builtin.shell: |
-        curl -sfL https://get.k3s.io | K3S_URL="https://{{ coordinator_private_ip }}:6443" K3S_TOKEN="{{ cluster_token }}" sh -s - agent \
+        curl -sfL https://get.k3s.io | K3S_URL="https://{{ coordinator_private_ip }}:6443" K3S_TOKEN="{{ hostvars[coordinator_host]['k3s_cluster_token'] }}" sh -s - agent \
           --node-ip={{ ansible_facts[private_vlan_interface]['ipv4']['address'] }} \
           --flannel-iface={{private_vlan_interface}}
-      args:
-        creates: /usr/local/bin/k3s-agent
+      register: agent_install
+      when: >
+        k3s_agent_status.status.ActiveState != 'active' or
+        k3s_agent_version.rc != 0 or
+        k3s_version not in k3s_agent_version.stdout
+
+    - name: Uncordon ComputeBlade to return to scheduling pool
+      ansible.builtin.command: >
+        kubectl uncordon {{ inventory_hostname | replace('.local', '-pods.local') }}
+      delegate_to: "{{ coordinator_host }}"
+      changed_when: true
+      when: >
+        agent_install.changed and
+        k3s_agent_status.status.ActiveState == 'active'
