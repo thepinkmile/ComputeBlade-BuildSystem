@@ -3,7 +3,7 @@ kind: Kustomization
 helmCharts:
   - name: traefik
     repo: https://traefik.github.io/charts
-    version: 30.0.2
+    version: 42.4.0
     releaseName: traefik-ingress
     namespace: traefik
     valuesInline:
@@ -35,7 +35,12 @@ helmCharts:
               - main: "gbt.org.uk"
                 sans:
                   - "*.gbt.org.uk"
+                  - "*.home.gbt.org.uk"
+                  - "*.mgnt.gbt.org.uk"
               - main: "thepinkmile.org.uk"
                 sans:
                   - "*.thepinkmile.org.uk"
+              - main: "whatizzydoin.org.uk"
+                sans:
+                  - "*.whatizzydoin.org.uk"
 namespace: traefik

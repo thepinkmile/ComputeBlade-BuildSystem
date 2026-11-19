@@ -1,0 +1,64 @@
+# --- 1. Untagged / Default VLAN (Private Management / Workstation Access) ---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default-vlan-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.1.100-192.168.1.250
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: default-vlan-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - default-vlan-pool
+  interfaces:
+    - eth0
+
+# --- 2. VLAN 10 (Public / Pods & Services with Internet Access) ---
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: vlan10-pods-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.10.100-192.168.10.250
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: vlan10-pods-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - vlan10-pods-pool
+  interfaces:
+    - eth0.10
+
+# --- 3. VLAN 20 (Backplane / Storage / No Internet) ---
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: vlan20-backplane-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.20.100-192.168.20.250
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: vlan20-backplane-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - vlan20-backplane-pool
+  interfaces:
+    - eth0.20
