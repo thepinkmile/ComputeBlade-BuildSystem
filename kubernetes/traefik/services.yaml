@@ -1,0 +1,76 @@
+# --- 1. Untagged / Default VLAN 1 (Proxy + Dashboard on 8080) ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-vlan1
+  namespace: traefik
+  annotations:
+    metallb.universe.tf/address-pool: default-vlan-pool
+    metallb.universe.tf/loadBalancerIPs: 192.168.1.250
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-traefik
+  ports:
+    - name: web
+      port: 80
+      targetPort: web
+      protocol: TCP
+    - name: websecure
+      port: 443
+      targetPort: websecure
+      protocol: TCP
+
+# --- 2. VLAN 10 (Public Proxy Only) ---
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-vlan10
+  namespace: traefik
+  annotations:
+    metallb.universe.tf/address-pool: vlan10-pods-pool
+    metallb.universe.tf/loadBalancerIPs: 192.168.10.250
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-traefik
+  ports:
+    - name: web
+      port: 80
+      targetPort: web
+      protocol: TCP
+    - name: websecure
+      port: 443
+      targetPort: websecure
+      protocol: TCP
+
+# --- 3. VLAN 20 (Backplane Proxy Only) ---
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-vlan20
+  namespace: traefik
+  annotations:
+    metallb.universe.tf/address-pool: vlan20-backplane-pool
+    metallb.universe.tf/loadBalancerIPs: 192.168.20.250
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-traefik
+  ports:
+    - name: web
+      port: 80
+      targetPort: web
+      protocol: TCP
+    - name: websecure
+      port: 443
+      targetPort: websecure
+      protocol: TCP

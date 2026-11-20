@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: traefik
+
+resources:
+  - namespace.yaml
+  - services.yaml
+  - wildcard-certs.yaml
+  - tls-store.yaml
+  - dashboard-ingress.yaml
+
+helmCharts:
+  - name: traefik
+    repo: https://traefik.github.io/charts
+    version: 42.4.0
+    releaseName: traefik
+    namespace: traefik
+    includeCRDs: true
+    valuesInline:
+      service:
+        enabled: false
+
+      ingressRoute:
+        dashboard:
+          enabled: false
+
+      providers:
+        kubernetesCRD:
+          enabled: true
+          allowCrossNamespace: true
+        kubernetesIngress:
+          enabled: true

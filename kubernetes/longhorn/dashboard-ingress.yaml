@@ -1,0 +1,27 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: vlan1-only-allowlist
+  namespace: longhorn-system
+spec:
+  ipAllowList:
+    sourceRange:
+      - 192.168.1.0/24
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: longhorn-dashboard
+  namespace: longhorn-system
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`longhorn.home.gbt.org.uk`)
+      kind: Rule
+      middlewares:
+        - name: vlan1-only-allowlist
+      services:
+        - name: longhorn-frontend
+          port: 80
+  tls: {}

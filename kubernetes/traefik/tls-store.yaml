@@ -1,0 +1,12 @@
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: traefik
+spec:
+  defaultCertificate:
+    secretName: gbt-org-uk-tls-secret
+  certificates:
+    - secretName: gbt-org-uk-tls-secret
+    - secretName: thepinkmile-org-uk-tls-secret
+    - secretName: whatizzydoin-uk-tls-secret

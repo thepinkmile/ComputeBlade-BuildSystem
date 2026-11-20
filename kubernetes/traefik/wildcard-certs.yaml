@@ -1,0 +1,51 @@
+# --- 1. Primary Domain + Nested Private Sub-Wildcards ---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gbt-org-uk-tls
+  namespace: traefik
+spec:
+  secretName: gbt-org-uk-tls-secret
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  commonName: "*.gbt.org.uk"
+  dnsNames:
+    - "gbt.org.uk"
+    - "*.gbt.org.uk"
+    - "*.home.gbt.org.uk"
+    - "*.mgnt.gbt.org.uk"
+
+# --- 2. Second Domain ---
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: thepinkmile-org-uk-tls
+  namespace: traefik
+spec:
+  secretName: thepinkmile-org-uk-tls-secret
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  commonName: "*.thepinkmile.org.uk"
+  dnsNames:
+    - "thepinkmile.org.uk"
+    - "*.thepinkmile.org.uk"
+
+# --- 3. Third Domain ---
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: whatizzydoin-uk-tls
+  namespace: traefik
+spec:
+  secretName: whatizzydoin-uk-tls-secret
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  commonName: "*.whatizzydoin.uk"
+  dnsNames:
+    - "whatizzydoin.uk"
+    - "*.whatizzydoin.uk"
